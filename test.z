@@ -1,0 +1,10 @@
+extern lang(c) {
+  int printf(char *fmt, ...);
+}
+
+
+main(string[arg_count] arguments) {
+  for (string arg in arguments) {
+    printf("%s", arg);
+  }
+}
