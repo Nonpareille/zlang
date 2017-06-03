@@ -1,64 +1,171 @@
 
 #include <cstring>
 
-struct NFA {
+struct RE {
   uint32_t size;
 };
 
 enum NFAState {
-  BRANCH, /// <- start of branch, BOL, '(', or '|'
-  PIECE, ///<- 
-  ATOM, /// <- repeatable element, any character or class
-  CLASS, /// <- character class, '['
-  TAIL /// <- end of branch, EOL or ')'
+  BRANCH, /// <- start of branch, '(', or '|'
+  PIECE, ///<- repetition, '*', '+', or '{,}', and '?'
+  ATOM, /// <- character, char-string, or metachar
+  CLASS, /// <- character class, '[' or '[^', till ']'
+  TAIL /// <- end of branch,  ')'
 }
 
-uint32_t nfa_len(char* pattern) {
-  int result = 0;
-  NFAState state = NFAState::START;
-  
-  //TODO(nick): can we precalculate the number of branches?
-  char* branch_start_stack[MAX_BRANCHES_RECURSE];
-  int cur_branch = 0;
+bool match(RE expression, const char * test) {
+  if (expression.size == 0)
+    return strlen(test) == 0;
 
-  char* c = pattern;
-  while (c != '\0') {
-    switch (state) {
-      case NFAState::BRANCH: {
-        result += sizeof(NFABranchNode);
-        if (*c == '(') {
-          // opening another branch
-          ++c;
-        } else {
-          state = NFAState::PIECE;
-        }
-      } break;
-      case NFAState::PIECE: {
-        result 
-      } break;
-      case NFAState::ATOM: {
-      } break;
-      case NFAState::CLASS: {
-      } break; 
-      case NFAState::TAIL: {
-        result += sizeof(NFATailNode);
+  return false;
+}
 
-        state = NFAState::BRANCH;
-      } break; 
+static bool is_atom(char * l, char start, char end) {
+  char * l = c;
+  while (*(++l) != end) {
+    char a = *l;
+    if (a == '\\') {
+      if (*(++l) == '\0') {
+        return true;
+      }
+    } else if (a == '\0' || a == start) {
+      return true;
     }
+  }
+  return false;
+}
+
+static size_t escaped_length(const char * escape) {
+  if (*escape != '\\') {
+    return 0;
+  }
+  char * l = escape;
+  switch (*(++l)) {
+    case 'u': {
+      // unicode codepoint
+    } break;
+    case '': {
+      //
+    } break;
+    default: {
+      //
+    } break;
+
   }
 }
 
-NFA build_nfa(char* pattern) {
-  NFA result;
-
-  result.size = nfa_len(pattern);
+static size_t unicode_length(const char * unicode) {
 }
 
-int main(void) {
-  char * pattern = "";
-
-  int pattern_len = strlen(pattern);
+static size_t regex_length(const char * pattern) {
+  size_t result = 0;
   
-  NFA nfa_size = build_nfa(pattern);
+  char * c = pattern;
+  while (*c) {
+    switch (*c++) {
+      case '(': case '|': {
+        // branch
+        result += sizeof(BranchNode);
+        in_atom = false;
+      } break;
+      case '*': case '+': {
+        if (*c == '?') {
+          // consume the lazy flag
+          ++c;
+        }
+        // captured piece
+        result += sizeof(PieceNode);
+        in_atom = false;
+      } break;
+      case '?': {
+        // optional piece
+        result += sizeof(PieceNode);
+        in_atom = false;
+      } break;
+      case '{': {
+        if (is_atom(c, '{', '}')) {
+          // atom
+          if (!in_atom) {
+            result += sizeof(AtomNode);
+            in_atom = true;
+          } else {
+            result += sizeof(char);
+          }
+        }
+        // repeated piece
+        result += sizeof(PieceNode);
+        in_atom = false;
+      } break;
+      case '\\': {
+        // escaped atom
+        if (!in_atom) {
+          result += sizeof(AtomNode);
+          in_atom = true;
+        } else {
+          result += escaped_length(c) * sizeof(char);
+        }
+      } break;
+      case '.': case '^': case '$': {
+        // metachar atom
+        result += sizeof(MetaAtomNode);
+        in_atom = false;
+      } break;
+      case '[': {
+        if (is_atom(c, '[', ']')) {
+          // atom
+          if (!in_atom) {
+            result += sizeof(AtomNode);
+            in_atom = true;
+          } else {
+            result += sizeof(char);
+          }
+        }
+        // class
+        result += sizeof(ClassNode);
+        in_atom = false;
+      } break;
+      case ')': {
+        // tail
+      } break;
+      default: {
+        // atom
+        if (!in_atom) {
+          result += sizeof(AtomNode);
+          in_atom = true;
+        } else {
+          result += unicode_length(c) * sizeof(char);
+        }
+      }
+    }
+  }
+
+  return result;
 }
+
+RE regex(const char * pattern/*, REOptions options*/) {
+  RE result = {0};
+
+  return result;
+}
+
+/*
+UNIT(RE) {
+  WHEN("Regular expression is empty or default") {
+    GIVEN(null, regex());
+    GIVEN(empty, regex(""));
+    THEN("should only match empty strings"){
+      ASSERT_TRUE(match(null, ""));
+      ASSERT_TRUE(match(empty, ""));
+      ASSERT_FALSE(match(null, "\0"));
+      ASSERT_FALSE(match(empty, "\0"));
+      ASSERT_FALSE(match(null, EOF));
+      ASSERT_FALSE(match(empty, EOF));
+    }
+    
+    THEN("should always fail advance") {
+    }
+    
+  }
+}
+*/
+
