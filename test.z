@@ -1,9 +1,9 @@
-extern lang(c) {
+extern(lang="c", static_library("libc.a")) {
   int printf(char *fmt, ...);
 }
 
 
-main(string[arg_count] arguments) {
+main :: (string[arg_count] arguments) -> int {
   for (string arg in arguments) {
     printf("%s", arg);
   }
