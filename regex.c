@@ -52,8 +52,8 @@ static bool is_lower(char l) {
   return (l >= 'a' && l <= 'z');
 }
 
-static bool is_upper(char l) {
-  return (l >= 'A' && l <= 'Z');
+static bool is_upper(char u) {
+  return (u >= 'A' && u <= 'Z');
 }
 
 static bool is_alpha(char a) {
@@ -61,7 +61,7 @@ static bool is_alpha(char a) {
 }
 
 static bool is_digit(char d) {
-  return (a >= '0' && a <= '9');
+  return (d >= '0' && d <= '9');
 }
 
 static bool is_word(char w) {
@@ -73,24 +73,49 @@ static bool is_hex_digit(char h) {
       || (h >= 'a' && h <= 'f') || (h >= 'A' && h <= 'F');
 }
 
+/** Consumes an escaped sequence.
+ * @detail
+ *   Takes a pointer to the beginning of an escaped 
+ * sequence, must be a backslash '\' character. This 
+ * procedure attempts to find a special escape sequence, 
+ * and if not found, reverts to treating the input as a 
+ * single escaped atom. The special escape sequence 
+ * currently supported are as follows:
+ *   - backreferences "\1-99,\g-99-99,\g{-99-99}"
+ *   - named backreferences "\g{name},\k{name}"
+ *   - posix/unicode character classes 
+ *     "\pC,\PC,\p{class},\P{class}"
+ *   - unicode hex codepoints "\x00-FF,\x{00-FFFF}"
+ *   - raw strings "\Q raw string *+\<...\E"
+ *   - control characters "\cA-Z"
+ *   - keep outs "\K"
+ *   - character class shorthands
+ *     "\d,D,h,H,l,L,n,N,s,S,u,U,v,V,w,W,X"
+ *   - boundary anchors "\A,Z,G,b,B,>,<"
+ *
+ * @param escape [inout] Points to the beginning of the 
+ *   sequence, on return points one past the end.
+ * 
+ * @return The node type consumed.
+ */
 static RENodeType consume_escape(char ** escape) {
   if (**escape != '\\') {
     return RENodeType::Invalid;
   }
 
-  char * l = *escape;
-  switch (*(++l)) {
+  char * l = *escape + 1;
+  switch (*l++) {
 
     // backreference, accepts "\\[1-9]\d?"
     case '1': case '2': case '3': case '4': case '5':
     case '6': case '7': case '8': case '9': {
       // backreference one or two digits
       if (is_digit(*(++l))) {
-        // consume "\\\d\d" (+2)
-        *escape += 2;
+        // consume "\\\d\d" (+3)
+        *escape += 3;
       } else {
-        // consume "\\\d" (+1)
-        *escape += 1;
+        // consume "\\\d" (+2)
+        *escape += 2;
       }
       return RENodeType::BackReferenceNode;
     } break;
@@ -98,64 +123,66 @@ static RENodeType consume_escape(char ** escape) {
     // backreference,
     // accepts "\\g(\{(-?\d\d?|[a-zA-Z_]\w*)\}|-?\d\d?)?
     case 'g': {
-      ++l;
       char c = *l;
+      char d = *l + 1;
 
-      if (c == '{') {
-        c = *(++l);
-        if (c == '-' && is_digit(*(l+1))) {
-          if (is_digit(*(l+2))) {
-            // consume "\\g\{-\d\d\}" (+6)
+      if (c == '{' && d != '\0') {
+        char e = *l + 2;
+        if (d == '-' && is_digit(e)) {
+          char f = *l + 3;
+          if (is_digit(f)) {
+            // consume "\\g\{-\d\d\}" (+7)
+            *escape += 7;
+          } else {
+            // consume "\\g\{-\d\}" (+6)
+            *escape += 6;
+          }
+          return RENodeType::BackReferenceNode;
+        } else if (is_digit(d)) {
+          if (is_digit(e)) {
+            // consume "\\g\{\d\d\}" (+6)
             *escape += 6;
           } else {
-            // consume "\\g\{-\d\}" (+5)
+            // consume "\\g\{\d\}" (+5)
             *escape += 5;
           }
           return RENodeType::BackReferenceNode;
-        } else if (is_digit(c)) {
-          if (is_digit(*(l+1))) {
-            // consume "\\g\{\d\d\}" (+5)
-            *escape += 5;
-          } else {
-            // consume "\\g\{\d\}" (+4)
-            *escape += 4;
-          }
-          return RENodeType::BackReferenceNode;
-        } else if (is_alpha(c) || c == '_') {
+        } else if (is_alpha(d) || d == '_') {
           while (*(++l)) {
-            c = *l;
-            if (c == '}' && *(l-1) != '{') {
-              // consume "\\g\{[a-zA-Z_]\w*\}" (=l)
-              escape = l;
+            c = d;
+            d = *l;
+            if (d == '}' && c != '{') {
+              // consume "\\g\{[a-zA-Z_]\w*\}" (=l+1)
+              *escape = l+1;
               return RENodeType::BackReferenceNode;
-            } else if (!is_word(c)) {
+            } else if (!is_word(d)) {
               // fails, this is a single char escape
               break;
             }
           }
         }
-      } else if (c == '-' && is_digit(*(l+1))) {
-        if (is_digit(*(l+2))) {
-          // consume "\\g-\d\d" (+4)
-          escape += 4;
+      } else if (c == '-' && is_digit(d)) {
+        if (is_digit(e)) {
+          // consume "\\g-\d\d" (+5)
+          *escape += 5;
         } else {
-          // consume "\\g-\d" (+3)
-          escape += 3;
+          // consume "\\g-\d" (+4)
+          *escape += 4;
         }
         return RENodeType::BackReferenceNode;
       } else if (is_digit(c)) {
-        if (is_digit(*(l+1))) {
-          // consume "\\g\d\d" (+3)
-          escape += 3;
+        if (is_digit(d)) {
+          // consume "\\g\d\d" (+4)
+          *escape += 4;
         } else {
-          // consume "\\g\d" (+2)
-          escape += 2
+          // consume "\\g\d" (+3)
+          *escape += 3;
         }
         return RENodeType::BackReferenceNode;
       }
 
-      // consume "\\g" (+1)
-      escape += 1;
+      // consume "\\g" (+2)
+      *escape += 2;
       return RENodeType::AtomNode;
     } break;
 
@@ -166,8 +193,8 @@ static RENodeType consume_escape(char ** escape) {
       if (*l == '{' && (is_alpha(*(++l)) || *l == '_')) {
         while (*(++l)) {
           if (*l == '}' && *(l-1) != '{') {
-            // consume "\\k\{[a-zA-Z_]\w*\}" (=l)
-            escape = l;
+            // consume "\\k\{[a-zA-Z_]\w*\}" (=l+1)
+            *escape = l+1;
             return RENodeType::BackReferenceNode;
           } else if (!is_word(*l)) {
             //fails, this is a single char escape
@@ -176,8 +203,8 @@ static RENodeType consume_escape(char ** escape) {
         }
       }
 
-      // consume "\\k" (+1)
-      escape += 1;
+      // consume "\\k" (+2)
+      *escape += 2;
       return RENodeType::AtomNode;
     } break;
 
@@ -193,8 +220,8 @@ static RENodeType consume_escape(char ** escape) {
         while (*(++l)) {
           c = *l;
           if (c == '}' && *(l-1) != '{') {
-            // consume "\\[pP]\{[\w\-]+\}" (=l)
-            escape = l;
+            // consume "\\[pP]\{[\w\-]+\}" (=l+1)
+            *escape = l+1;
             return RENodeType::ClassNode;
           } else if (!is_word(c) && c != '-') {
             // fails, this is a single char escape
@@ -203,13 +230,13 @@ static RENodeType consume_escape(char ** escape) {
         }
       } else if (c == 'C' || (c >= 'L' && c <= 'N')
               || c == 'P' || c == 'S' || c == 'Z') {
-        // consume "\\[pP][CLMNPSZ]" (+2)
-        escape += 2;
+        // consume "\\[pP][CLMNPSZ]" (+3)
+        *escape += 3;
         return RENodeType::ClassNode;
       }
 
-      // consume "\\[pP]" (+1)
-      escape += 1;
+      // consume "\\[pP]" (+2)
+      *escape += 2;
       return RENodeType::AtomNode;
     } break;
 
@@ -225,8 +252,8 @@ static RENodeType consume_escape(char ** escape) {
         while (*(++l)) {
           ++num_digits;
           if (*l == '}' && num_digits > 2) {
-            // consume "\\x\{\h{2,4}\}" (=l)
-            escape = l;
+            // consume "\\x\{\h{2,4}\}" (=l+1)
+            *escape = l+1;
             return RENodeType::AtomNode;
           } else if (!is_hex_digit(*l)
                   || num_digits >= 4) {
@@ -235,13 +262,13 @@ static RENodeType consume_escape(char ** escape) {
           }
         }
       } else if (is_hex_digit(c) && is_hex_digit(*(++l))) {
-        // consume "\\x\h\h" (+3)
-        escape += 3;
+        // consume "\\x\h\h" (+4)
+        *escape += 4;
         return RENodeType::AtomNode;
       }
 
-      // consume "\\x" (+1)
-      escape += 1;
+      // consume "\\x" (+2)
+      *escape += 2;
       return RENodeType::AtomNode;
     } break;
 
@@ -250,34 +277,34 @@ static RENodeType consume_escape(char ** escape) {
       // literal escape until "\E"
       while (*(++l)) {
         if (*l == '\\' && *(l+1) == 'E') {
-          // consume "\\Q.*\\E" (=l+1)
-          escape = l+1;
+          // consume "\\Q.*\\E" (=l+2)
+          *escape = l+2;
           return RENodeType::AtomNode;
         }
       }
 
-      // consume "\\Q" (+1)
-      escape += 1;
+      // consume "\\Q" (+2)
+      *escape += 2;
       return RENodeType::AtomNode;
     } break;
 
     // control character accepts "\\c[a-zA-Z]?"
     case 'c': {
       if (is_alpha(*(++l))) {
-        // consume "\\c[a-zA-Z]" (+2)
-        escape += 2;
+        // consume "\\c[a-zA-Z]" (+3)
+        *escape += 3;
         return RENodeType::AtomNode;
       }
 
-      // consume "\\c" (+1)
-      escape += 1;
+      // consume "\\c" (+2)
+      *escape += 2;
       return RENodeType::AtomNode;
     } break;
 
     case 'K' {
       // keep left out of match
-      // consume "\\K" (+1)
-      escape += 1;
+      // consume "\\K" (+2)
+      *escape += 2;
       return RENodeType::KeepOutNode;
     } break;
 
@@ -286,22 +313,22 @@ static RENodeType consume_escape(char ** escape) {
     case 'u': case 'U': case 'v': case 'V': case 'w': 
     case 'W': case 'X': {
       // character class shorthand
-      // consume "\\[dDhHlLnNsSuUvVwWX]" (+1)
-      escape += 1;
+      // consume "\\[dDhHlLnNsSuUvVwWX]" (+2)
+      *escape += 2;
       return RENodeType::ClassNode;
     } break;
 
     case 'A': case 'Z': case 'G': case 'b': case 'B': 
     case '>': case '<': {
       // anchor/boundary sequence
-      // consume "\\[AZGbB><]" (+1)
-      escape += 1;
+      // consume "\\[AZGbB><]" (+2)
+      *escape += 2;
       return RENodeType::AnchorNode;
     } break;
 
     default: {
-      // consume "\\." (+1)
-      escape += 1;
+      // consume "\\." (+2)
+      *escape += 2;
       return RENodeType::AtomNode;
     } break;
   }
