@@ -7,23 +7,15 @@ struct RE {
 
 enum RENodeType {
   Invalid = -1,
-  BranchNode,
-  PieceNode,
-  AtomNode,
   ClassNode,
   TailNode,
-  AnchorNode,
   BackReferenceNode,
+  AtomNode,
+  PieceNode, // <- repetition or capture
   KeepOutNode,
+  AnchorNode,
+  BranchNode,
   End
-};
-
-enum NFAState {
-  BRANCH, /// <- start of branch, '(', or '|'
-  PIECE, ///<- repetition, '*', '+', or '{,}', and '?'
-  ATOM, /// <- character, char-string, or metachar
-  CLASS, /// <- character class, '[' or '[^', till ']'
-  TAIL /// <- end of branch,  ')'
 };
 
 bool match(RE expression, const char * test) {
@@ -52,8 +44,8 @@ static bool is_lower(char l) {
   return (l >= 'a' && l <= 'z');
 }
 
-static bool is_upper(char u) {
-  return (u >= 'A' && u <= 'Z');
+static bool is_upper(char l) {
+  return (l >= 'A' && l <= 'Z');
 }
 
 static bool is_alpha(char a) {
@@ -69,21 +61,41 @@ static bool is_word(char w) {
 }
 
 static bool is_hex_digit(char h) {
-  return is_digit(h) 
+  return is_digit(h)
       || (h >= 'a' && h <= 'f') || (h >= 'A' && h <= 'F');
+}
+
+static bool consume_name(char ** name, char * term) {
+  if (!is_alpha(**name) && **name != '_') {
+    return false;
+  }
+
+  char *l = *name;
+  while (*(++l)) {
+    for (char *t = term; t != '\0'; ++t) {
+      if (*l == *t) {
+        *name = l;
+        return true;
+      }
+    }
+    if (!is_word(*l)) {
+      return false;
+    }
+  }
+  return false;
 }
 
 /** Consumes an escaped sequence.
  * @detail
- *   Takes a pointer to the beginning of an escaped 
- * sequence, must be a backslash '\' character. This 
- * procedure attempts to find a special escape sequence, 
- * and if not found, reverts to treating the input as a 
- * single escaped atom. The special escape sequence 
+ *   Takes a pointer to the beginning of an escaped
+ * sequence, must be a backslash '\' character. This
+ * procedure attempts to find a special escape sequence,
+ * and if not found, reverts to treating the input as a
+ * single escaped atom. The special escape sequence
  * currently supported are as follows:
  *   - backreferences "\1-99,\g-99-99,\g{-99-99}"
  *   - named backreferences "\g{name},\k{name}"
- *   - posix/unicode character classes 
+ *   - posix/unicode character classes
  *     "\pC,\PC,\p{class},\P{class}"
  *   - unicode hex codepoints "\x00-FF,\x{00-FFFF}"
  *   - raw strings "\Q raw string *+\<...\E"
@@ -93,9 +105,9 @@ static bool is_hex_digit(char h) {
  *     "\d,D,h,H,l,L,n,N,s,S,u,U,v,V,w,W,X"
  *   - boundary anchors "\A,Z,G,b,B,>,<"
  *
- * @param escape [inout] Points to the beginning of the 
+ * @param escape [inout] Points to the beginning of the
  *   sequence, on return points one past the end.
- * 
+ *
  * @return The node type consumed.
  */
 static RENodeType consume_escape(char ** escape) {
@@ -147,19 +159,10 @@ static RENodeType consume_escape(char ** escape) {
             *escape += 5;
           }
           return RENodeType::BackReferenceNode;
-        } else if (is_alpha(d) || d == '_') {
-          while (*(++l)) {
-            c = d;
-            d = *l;
-            if (d == '}' && c != '{') {
-              // consume "\\g\{[a-zA-Z_]\w*\}" (=l+1)
-              *escape = l+1;
-              return RENodeType::BackReferenceNode;
-            } else if (!is_word(d)) {
-              // fails, this is a single char escape
-              break;
-            }
-          }
+        } else if (consume_name(&l, "}") {
+          // consume "\\g\{(?&consume_name)\}" (=l+1)
+          *escape = l+1;
+          return RENodeType::BackReferenceNode;
         }
       } else if (c == '-' && is_digit(d)) {
         if (is_digit(e)) {
@@ -187,10 +190,10 @@ static RENodeType consume_escape(char ** escape) {
     } break;
 
     // named backreference,
-    // accepts "\\k(\{[a-zA-Z_]\w*\})?
+    // accepts "\\k([{<'][a-zA-Z_]\w*\})?
     case 'k': {
       ++l;
-      if (*l == '{' && (is_alpha(*(++l)) || *l == '_')) {
+      if (*l == '{' || *l == '<') {
         while (*(++l)) {
           if (*l == '}' && *(l-1) != '{') {
             // consume "\\k\{[a-zA-Z_]\w*\}" (=l+1)
@@ -208,7 +211,7 @@ static RENodeType consume_escape(char ** escape) {
       return RENodeType::AtomNode;
     } break;
 
-    // posix/unicode character class 
+    // posix/unicode character class
     // accepts "\\[pP](\{[\w\-]+\}|[CLMNPSZ])?"
     case 'p': case 'P': {
       ++l;
@@ -308,9 +311,9 @@ static RENodeType consume_escape(char ** escape) {
       return RENodeType::KeepOutNode;
     } break;
 
-    case 'd': case 'D': case 'h': case 'H': case 'l': 
-    case 'L': case 'n': case 'N': case 's': case 'S': 
-    case 'u': case 'U': case 'v': case 'V': case 'w': 
+    case 'd': case 'D': case 'h': case 'H': case 'l':
+    case 'L': case 'n': case 'N': case 's': case 'S':
+    case 'u': case 'U': case 'v': case 'V': case 'w':
     case 'W': case 'X': {
       // character class shorthand
       // consume "\\[dDhHlLnNsSuUvVwWX]" (+2)
@@ -318,7 +321,7 @@ static RENodeType consume_escape(char ** escape) {
       return RENodeType::ClassNode;
     } break;
 
-    case 'A': case 'Z': case 'G': case 'b': case 'B': 
+    case 'A': case 'Z': case 'G': case 'b': case 'B':
     case '>': case '<': {
       // anchor/boundary sequence
       // consume "\\[AZGbB><]" (+2)
@@ -334,10 +337,63 @@ static RENodeType consume_escape(char ** escape) {
   }
 }
 
+static RENodeType consume_group(char ** special) {
+  if (**special != '(' && **(special+1) != '?') {
+    return RENodeType::Invalid;
+  }
+
+  char * l = *(special+2);
+
+  switch (*l) {
+    // comment,
+    // accepts "\(\?#.*\)"
+    case '#': {
+    } break;
+
+    // named group,
+    // accepts "\(\?(P[=<]|[<'])[a-zA-Z_]\w+[>']?"
+    case 'P': case '<': case '\'': {
+    } break;
+
+    // mode modifying group,
+    // accepts "\(\?[imnsx]*(-[imnsx])?:?"
+    case 'i': case 'm': case 'n': case 's': case 'x': {
+    } break;
+
+    // mode reset group,
+    // accepts "\(\?^:?"
+    case '^': {
+    } break;
+
+    // special group,
+    // accepts "\(\?[|>=!:]"
+    case '|': case '>': case '=': case '!': case ':': {
+    } break;
+
+    // lookbehind group
+    // accepts "\(\?<[=!]"
+    case '<': {
+    } break;
+
+    // conditional branch group
+    // accepts "\(\?\(([<'][a-zA-Z_]\w+[>']\)|[+-]?\d+\)"
+    case '(': {
+    } break;
+
+    // not a supported special group,
+    // accepts "\("
+    default: {
+      // consume "\(" (+1)
+      *special += 1;
+      return RENodeType::BranchNode;
+    } break;
+  }
+}
+
 static size_t unicode_length(const char * unicode) {
 }
 
-static size_t node_length(RENodeType type, 
+static size_t node_length(RENodeType type,
                           const char * c,
                           const char * end = nullptr) {
   switch (type) {
@@ -370,79 +426,99 @@ static size_t node_length(RENodeType type,
 
 static RENodeType consume_subpattern(char ** pattern) {
   size_t result = 0;
-  
+
   char * l = *pattern;
   switch (*l) {
-    // new branch or special block, 
-    // accepts "(\(|\|)(\?...)?"
-    case '(': case '|': {
+    // new branch or special block,
+    // accepts "\((\?(?&consume_special))?"
+    case '(': {
       if (*(l+1) == '?') {
         // special block
         return consume_special(pattern);
       }
-      // consume "(\(|\|)"
+      // consume "\(" (+1)
       *patern += 1;
       return RENodeType::BranchNode;
     } break;
 
-    // capture piece accepts "(\*|\+|\?)(\?)?"
+    case '|': {
+      // new branch
+      // consume "\|" (+1)
+      *pattern += 1;
+      return RENodeType::BranchNode;
+    } break;
+
+    // capture piece, accepts "(\*|\+|\?)(\?)?"
     case '*': case '+': case '?': {
-      if (*c == '?') {
-        // consume the lazy flag
-        ++c;
+      if (*(l+1) == '?') {
+        // consume "(\*|\+|\?)\?" (+2)
+        *pattern += 2;
+      } else {
+        // consume "(\*|\+|\?)" (+1)
+        *pattern += 1;
       }
-      // captured piece
       return RENodeType::PieceNode;
     } break;
 
+    // repeated piece, accepts "{(\d+,?[\d]*})?
     case '{': {
-      char * l = c;
-      bool is_atom = false;
-      while (*(++l)) {
-        if (*l == '}' && *(l-1) != '{') {
-          // consume "\{\d+,?[\d]*\}" (=l)
-          *pattern = l;
-          return RENodeType::PieceNode;
-          break;
-        } else if (!is_digit(*l) && *l != ',') {
-          break;
+      if (is_digit(*(++l))) {
+        bool found_comma = false;
+        while (*(++l)) {
+          if (*l == '}' && *(l-2) != '{') {
+            // consume "{\d+,?[\d]*}" (=l+1)
+            *pattern = l+1;
+            return RENodeType::PieceNode;
+            break;
+          } else if (!is_digit(*l)) {
+            if (found_comma || *l != ',') {
+              break;
+            }
+            found_comma = true;
+          }
         }
       }
-      // atom
+      // consume "{" (+1)
+      *pattern += 1;
       return RENodeType::AtomNode;
     } break;
 
     case '\\': {
-      // escape
-      return consume_escape(&pattern);
+      // escape sequence
+      // consumes "\\(?&consume_escape)"
+      return consume_escape(pattern);
     } break;
 
     case '.': {
       // pseudo class
+      // consume "\." (+1)
+      *pattern += 1;
       return RENodeType::ClassNode;
     }
 
     case '^': case '$': {
       // anchor
+      // consume "(\^|\$)" (+1)
+      *pattern += 1;
       return RENodeType::AnchorNode;
     } break;
 
     case '[': {
-      if (is_atom(c, '[', ']')) {
-        // atom
-        return RENodeType::AtomNode;
-      }
-      // class
-      return RENodeType::ClassNode;
+      // character class,
+      // accepts "[(?consume_class)
+      return consume_class(pattern);
     } break;
 
     case ')': {
-      // tail
+      // tail of a branch
+      // consume "\)" (+1)
+      *pattern += 1;
       return RENodeType::TailNode;
     } break;
 
     default: {
-      // atom
+      // consume "." (+1)
+      *pattern += 1
       return RENodeType::AtomNode;
     }
   }
@@ -467,10 +543,10 @@ UNIT(RE) {
       ASSERT_FALSE(match(null, EOF));
       ASSERT_FALSE(match(empty, EOF));
     }
-    
+
     THEN("should always fail advance") {
     }
-    
+
   }
 }
 */
